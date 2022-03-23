@@ -1,0 +1,34 @@
+{
+    "network": {
+        "bind_address": ":8080"
+    },
+    "components" : [
+        { "name": "pi",
+          "type": "board",
+          "model" : "pi",
+          "attributes":
+            {
+              "i2cs": [
+              {
+                "name": "bus1",
+                "bus": "1"
+              }
+              ]
+            }
+        },
+        {
+            "name": "imu",
+            "type": "imu",
+            "model": "mpu9250",
+            "attributes":
+            {
+                "board" : "pi",
+                "bus": "bus1"
+            },
+            "depends_on":
+            [
+                "pi"
+            ]
+        }
+    ]
+}

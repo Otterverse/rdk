@@ -36,3 +36,9 @@ func OrientationInverse(o Orientation) Orientation {
 	q := quaternion(quat.Inv(o.Quaternion()))
 	return &q
 }
+
+// NewZeroOrientation returns an orientatation from a Quaternion
+func NewOrientationFromQuat(i quat.Number) Orientation {
+	q := quaternion(i)
+	return &q
+}

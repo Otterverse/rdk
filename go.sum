@@ -1340,6 +1340,8 @@ github.com/tommy-muehle/go-mnd/v2 v2.4.0 h1:1t0f8Uiaq+fqKteUR4N9Umr6E99R+lDnLnq7
 github.com/tommy-muehle/go-mnd/v2 v2.4.0/go.mod h1:WsUAkMJMYww6l/ufffCD3m+P7LEvr8TnZn9lwVDlgzw=
 github.com/tonyOreglia/glee v0.0.0-20201027095806-ae3f0739ad37 h1:PcGvoKpPQgoE+dRHyFOUhtN8QrXdp9/7mdD+K/B3n9M=
 github.com/tonyOreglia/glee v0.0.0-20201027095806-ae3f0739ad37/go.mod h1:0QfULNex8eBJCqrXmVHIsz9+AI5eKZeQ4ouf7Lg8RfM=
+github.com/tracktum/go-ahrs v1.0.0 h1:MX4G3tyoenWrI/7KJecatsAywZT+LVqdKx4vhiWC6qA=
+github.com/tracktum/go-ahrs v1.0.0/go.mod h1:nplH+fle24YOGPZcU3Tb1CZx4gJc89lAeGOLjNbynIc=
 github.com/tv42/httpunix v0.0.0-20150427012821-b75d8614f926/go.mod h1:9ESjWnEqriFuLhtthL60Sar/7RFoluCcXsuvEwTV5KM=
 github.com/twitchtv/twirp v8.1.0+incompatible/go.mod h1:RRJoFSAmTEh2weEqWtpPE3vFK5YBhA6bqp2l1kfCC5A=
 github.com/ugorji/go v1.1.4/go.mod h1:uQMGLiO92mf5W77hV/PUCpI3pbzQx3CRekS0kk+RGrc=
