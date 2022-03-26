@@ -129,12 +129,12 @@ func (m *Motor) setPWM(ctx context.Context, powerPct float64) error {
 	powerPct = math.Max(powerPct, -1*m.maxPowerPct)
 
 	if math.Abs(powerPct) <= 0.001 {
-		if m.EnablePinLow != nil {
-			errs = m.EnablePinLow.Set(ctx, true)
-		}
-		if m.EnablePinHigh != nil {
-			errs = m.EnablePinHigh.Set(ctx, false)
-		}
+		// if m.EnablePinLow != nil {
+		// 	errs = m.EnablePinLow.Set(ctx, true)
+		// }
+		// if m.EnablePinHigh != nil {
+		// 	errs = m.EnablePinHigh.Set(ctx, false)
+		// }
 
 		if m.A != nil && m.B != nil {
 			errs = multierr.Combine(
@@ -297,8 +297,15 @@ func (m *Motor) IsPowered(ctx context.Context) (bool, error) {
 
 // Stop turns the power to the motor off immediately, without any gradual step down, by setting the appropriate pins to low states.
 func (m *Motor) Stop(ctx context.Context) error {
+	var errs error
+	if m.EnablePinLow != nil {
+		errs = m.EnablePinLow.Set(ctx, true)
+	}
+	if m.EnablePinHigh != nil {
+		errs = m.EnablePinHigh.Set(ctx, false)
+	}
 	m.on = false
-	return m.setPWM(ctx, 0)
+	return multierr.Combine(errs, m.setPWM(ctx, 0))
 }
 
 // GoTo is not supported.

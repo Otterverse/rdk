@@ -44,9 +44,11 @@ require (
 	github.com/sjwhitworth/golearn v0.0.0-20201127221938-294d65fca392
 	github.com/starship-technologies/gobag v1.0.6
 	github.com/tonyOreglia/glee v0.0.0-20201027095806-ae3f0739ad37
+	github.com/tracktum/go-ahrs v1.0.0
 	github.com/viamrobotics/evdev v0.1.3
 	github.com/wasmerio/wasmer-go v1.0.4
 	go-hep.org/x/hep v0.28.5
+	go.einride.tech/pid v0.1.0
 	go.einride.tech/vlp16 v0.7.0
 	go.mongodb.org/mongo-driver v1.8.0
 	go.opencensus.io v0.23.0
@@ -263,7 +265,6 @@ require (
 	github.com/timakin/bodyclose v0.0.0-20200424151742-cb6215831a94 // indirect
 	github.com/tomarrell/wrapcheck/v2 v2.4.0 // indirect
 	github.com/tommy-muehle/go-mnd/v2 v2.4.0 // indirect
-	github.com/tracktum/go-ahrs v1.0.0 // indirect
 	github.com/ultraware/funlen v0.0.3 // indirect
 	github.com/ultraware/whitespace v0.0.4 // indirect
 	github.com/uudashr/gocognit v1.0.5 // indirect

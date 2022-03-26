@@ -46,8 +46,8 @@ type mpu struct {
 	magnetometer    r3.Vector
 	i2c             board.I2C
 	logger          golog.Logger
-	aScale          float64
-	gScale          float64
+	aScale, gScale      float64
+	gXCal, gYCal, gZCal float64
 	ahrs            ahrs.Madgwick
 
 	mu              sync.Mutex
@@ -74,7 +74,7 @@ func (i *mpu) ReadAcceleration(ctx context.Context) (r3.Vector, error) {
 }
 
 func (i *mpu) GetReadings(ctx context.Context) ([]interface{}, error) {
-	return []interface{}{i.angularVelocity, i.orientation, i.acceleration}, nil
+	return []interface{}{&i.angularVelocity, &i.orientation, &i.acceleration}, nil
 }
 
 // NewIMU creates a new mpu9250 IMU
@@ -97,15 +97,21 @@ func NewIMU(ctx context.Context, r robot.Robot, config config.Component, logger 
 		return nil, fmt.Errorf("can't find I2C bus: %s", config.Attributes["bus"].(string))
 	}
 
-	dev := &mpu{i2c: i2c, logger: logger, aScale: 2.0, gScale: 250.0}
+	// TODO Make these config variables
+	dev := &mpu{i2c: i2c, logger: logger,
+		aScale: 2.0,
+		gScale: 250.0,
+		gXCal: -2.6,
+		gYCal: -1.6,
+		gZCal: 0,
+	}
 
 	dev.ahrs = ahrs.NewMadgwick(0.1, 100) // 0.1 beta, 100hz update
 
-	err = multierr.Combine(dev.startMPU(ctx), dev.startMag(ctx))
-	if err != nil {
-		return nil, err
+	errs := multierr.Combine(dev.startMPU(ctx), dev.startMag(ctx))
+	if errs != nil {
+		return nil, errs
 	}
-
 
 	var cancelCtx context.Context
 	cancelCtx, dev.cancelFunc = context.WithCancel(ctx)
@@ -149,26 +155,34 @@ func (i *mpu) startMPU(ctx context.Context) error {
 	}
 	defer h.Close()
 
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, SMPLRT_DIV, 0))
-	if utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
+	// Reset
+	errs = multierr.Combine(errs, h.WriteByteData(ctx, PWR_MGMT_1, 0b10000000))
+	if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, PWR_MGMT_1, 0))
-	if utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
+	// Set clocksource to optimal
+	errs = multierr.Combine(errs, h.WriteByteData(ctx, PWR_MGMT_1, 0b00000001))
+	if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, PWR_MGMT_1, 1))
-	if utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
+	// Enable i2c passthrough for compass
+	errs = multierr.Combine(errs, h.WriteByteData(ctx, INT_PIN_CFG, 0b00000010))
+	if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, CONFIG, 0))
-	if utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, GYRO_CONFIG, 0))
-	if utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, INT_PIN_CFG, 2))
-	if utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
+	// errs = multierr.Combine(errs, h.WriteByteData(ctx, SMPLRT_DIV, 0))
+	// if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, INT_ENABLE, 1))
-	if utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
+	// errs = multierr.Combine(errs, h.WriteByteData(ctx, CONFIG, 0))
+	// if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
+
+	// errs = multierr.Combine(errs, h.WriteByteData(ctx, GYRO_CONFIG, 0))
+	// if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
+
+	// errs = multierr.Combine(errs, h.WriteByteData(ctx, USER_CTRL, 0))
+	// if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
+
+	// errs = multierr.Combine(errs, h.WriteByteData(ctx, INT_ENABLE, 1))
+	// if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
 	return errs
 }
@@ -191,7 +205,7 @@ func (i *mpu) startMag(ctx context.Context) error {
 	mode := (res <<4)+rate // bit conversion
 
 	errs = multierr.Combine(errs, h.WriteByteData(ctx, AK8963_CNTL, mode))
-	if utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
+	if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
 	return errs
 }
@@ -228,14 +242,14 @@ func (i *mpu) doRead(ctx context.Context) error {
 	errs = multierr.Combine(errs, err)
 	z, err = i.readRawBits(ctx, GYRO_ZOUT_H)
 	errs = multierr.Combine(errs, err)
-	i.angularVelocity = spatialmath.AngularVelocity{X: i.scaleGyro(x), Y: i.scaleGyro(y), Z: i.scaleGyro(z)}
+	i.angularVelocity = spatialmath.AngularVelocity{X: i.scaleGyro(x) +  i.gXCal, Y: i.scaleGyro(y) + i.gYCal, Z: i.scaleGyro(z) + i.gZCal}
 
 	if errs != nil {
 		return errs
 	}
 
 
-	for {
+	for loop := 0; loop < 100; loop++  {
 		var errs error
 		x, err := i.readRawBitsMag(ctx, HXH)
 		errs = multierr.Combine(errs, err)
@@ -251,13 +265,13 @@ func (i *mpu) doRead(ctx context.Context) error {
 	}
 
 	q := i.ahrs.Update9D(
-		i.angularVelocity.X * (math.Pi/180),
+		i.angularVelocity.X * (math.Pi/180), // rad/s to deg/s
 		i.angularVelocity.Y * (math.Pi/180),
 		i.angularVelocity.Z * (math.Pi/180),
-		i.acceleration.X,
-		i.acceleration.Y,
-		i.acceleration.Z,
-		i.magnetometer.X / 100, // microteslas to gauss
+		i.acceleration.X / 1000, // mm/s^2 to m/s^2
+		i.acceleration.Y / 1000,
+		i.acceleration.Z / 1000,
+		i.magnetometer.X / 100,  // microteslas to gauss
 		i.magnetometer.Y / 100,
 		i.magnetometer.Z / 100,
 	)
@@ -272,7 +286,7 @@ func (i *mpu) doRead(ctx context.Context) error {
 func (i *mpu) scaleAcceleration(raw int16) float64 {
 	// Default 16-bit range is +/- 2G
 	// Scaling factor: g (in m/s^2) * scale range / math.MaxInt16
-	return float64(raw) * ((9.8065 * i.aScale) / math.MaxInt16)
+	return float64(raw) * ((9806.5 * i.aScale) / math.MaxInt16)
 }
 
 func (i *mpu) scaleGyro(raw int16) float64 {

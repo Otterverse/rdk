@@ -1,34 +1,115 @@
 {
-    "network": {
-        "bind_address": ":8080"
+  "auth": {
+    "handlers": [],
+    "tls_auth_entities": []
+  },
+  "components": [
+    {
+      "attributes": {
+        "digitalInterrupts": [
+          {
+            "formula": "",
+            "name": "encRA",
+            "pin": "8",
+            "type": ""
+          },
+          {
+            "formula": "",
+            "name": "encRB",
+            "pin": "10",
+            "type": ""
+          },
+          {
+            "formula": "",
+            "name": "encLA",
+            "pin": "13",
+            "type": ""
+          },
+          {
+            "formula": "",
+            "name": "encLB",
+            "pin": "11",
+            "type": ""
+          }
+        ],
+        "i2cs": [
+          {
+            "bus": "1",
+            "name": "bus1"
+          }
+        ]
+      },
+      "depends_on": [],
+      "model": "pi",
+      "name": "pi",
+      "type": "board"
     },
-    "components" : [
-        { "name": "pi",
-          "type": "board",
-          "model" : "pi",
-          "attributes":
-            {
-              "i2cs": [
-              {
-                "name": "bus1",
-                "bus": "1"
-              }
-              ]
-            }
+    {
+      "attributes": {
+        "board": "pi",
+        "bus": "bus1"
+      },
+      "depends_on": [
+        "pi"
+      ],
+      "model": "mpu9250",
+      "name": "imu",
+      "type": "imu"
+    },
+    {
+      "attributes": {
+        "board": "pi",
+        "encoder": "encRA",
+        "encoderB": "encRB",
+        "max_rpm": 500,
+        "pins": {
+          "a": "",
+          "b": "",
+          "dir": "40",
+          "enLow": "7",
+          "pwm": "38"
         },
-        {
-            "name": "imu",
-            "type": "imu",
-            "model": "mpu9250",
-            "attributes":
-            {
-                "board" : "pi",
-                "bus": "bus1"
-            },
-            "depends_on":
-            [
-                "pi"
-            ]
-        }
-    ]
+        "pwmFreq": 8000,
+        "ticksPerRotation": 1466
+      },
+      "depends_on": [
+        "pi"
+      ],
+      "model": "gpio",
+      "name": "motorR",
+      "type": "motor"
+    },
+    {
+      "attributes": {
+        "board": "pi",
+        "encoder": "encLA",
+        "encoderB": "encLB",
+        "max_rpm": 500,
+        "pins": {
+          "a": "",
+          "b": "",
+          "dir": "31",
+          "enLow": "29",
+          "pwm": "33"
+        },
+        "pwmFreq": 8000,
+        "ticksPerRotation": 1466
+      },
+      "depends_on": [
+        "pi"
+      ],
+      "model": "gpio",
+      "name": "motorL",
+      "type": "motor"
+    }
+  ],
+  "network": {
+    "bind_address": ":8080",
+    "fqdn": "",
+    "tls_cert_file": "",
+    "tls_key_file": ""
+  },
+  "processes": [],
+  "remotes": [],
+  "services": []
 }
