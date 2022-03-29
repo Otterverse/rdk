@@ -23,6 +23,9 @@ import (
 
 	"go.einride.tech/pid"
 
+	// "net/http"
+	// _ "net/http/pprof"
+
 )
 
 var workers sync.WaitGroup
@@ -40,13 +43,20 @@ func main() {
 
 func mainWithArgs(ctx context.Context, args []string, logger golog.Logger) (err error) {
 
+	// workers.Add(1)
+	// go func() {
+	// 	defer workers.Done()
+	// 	logger.Debug(http.ListenAndServe(":6060", nil))
+	// }()
+
+
 	flag.Float64Var(&bP, "bP", 0.1, "Balance kP")
 	flag.Float64Var(&bI, "bI", 0, "Balance kI")
-	flag.Float64Var(&bD, "bD", 0.03, "Balance kD")
+	flag.Float64Var(&bD, "bD", 0.05, "Balance kD")
 
-	flag.Float64Var(&sP, "sI", 2.0, "Speed kP")
-	flag.Float64Var(&sI, "sP", 3.0, "Speed kI")
-	flag.Float64Var(&sD, "sD", 1.0, "Speed kD")
+	flag.Float64Var(&sP, "sP", 4.0, "Speed kP")
+	flag.Float64Var(&sI, "sI", 8.0, "Speed kI")
+	flag.Float64Var(&sD, "sD", 6.0, "Speed kD")
 
 	flag.Float64Var(&awG, "awG", 0, "Antiwindup Gain")
 
@@ -147,8 +157,8 @@ func balance(ctx context.Context, r robot.Robot) {
 			IntegralGain:     sI, //0
 			DerivativeGain:   sD, //0
 			AntiWindUpGain:   awG, //0
-			MaxOutput: 30,
-			MinOutput: -30,
+			MaxOutput: 10,
+			MinOutput: -10,
 			LowPassTimeConstant: time.Second,
 		},
 	}
@@ -197,23 +207,24 @@ func balance(ctx context.Context, r robot.Robot) {
 		}
 
 
-
-		newLPos, _ := motorL.GetPosition(ctx)
-		newRPos, _ := motorR.GetPosition(ctx)
-
-		lSpeed := (newLPos - prevLPos) / 0.03
-		rSpeed := (newRPos - prevRPos) / 0.03
-
-		prevLPos, prevRPos = newLPos, newRPos
-
-		curSpeed := prevSpeed * 0.7 + ((lSpeed + rSpeed) / 2) * 0.3
-		prevSpeed = curSpeed
-
 		if tick % 5 == 0 {
+
+			newLPos, _ := motorL.GetPosition(ctx)
+			newRPos, _ := motorR.GetPosition(ctx)
+
+			lSpeed := (newLPos - prevLPos) / 0.05
+			rSpeed := (newRPos - prevRPos) / 0.05
+
+			prevLPos, prevRPos = newLPos, newRPos
+
+			// Filter the speed over time a tad more
+			curSpeed := prevSpeed * 0.7 + ((lSpeed + rSpeed) / 2) * 0.3
+			prevSpeed = curSpeed
+
 			speed.Update(pid.TrackingControllerInput{
 				ReferenceSignal:  0,
 				ActualSignal:     curSpeed,
-				SamplingInterval:  150 * time.Millisecond,
+				SamplingInterval:  50 * time.Millisecond,
 			})
 			r.Logger().Debugf("SPID: %+v", speed.State)
 			r.Logger().Debugf("Out: %.2f, Speed: %.2f, Pitch: %.2f",speed.State.ControlSignal, curSpeed, o.Pitch * 180/math.Pi)
@@ -223,7 +234,7 @@ func balance(ctx context.Context, r robot.Robot) {
 		balance.Update(pid.TrackingControllerInput{
 			ReferenceSignal:  speed.State.ControlSignal,
 			ActualSignal:     o.Pitch * 180/math.Pi,
-			SamplingInterval: 30 * time.Millisecond,
+			SamplingInterval: 10 * time.Millisecond,
 		})
 
 		//r.Logger().Debugf("Bal: %+v", balance.State)

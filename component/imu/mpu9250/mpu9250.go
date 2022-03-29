@@ -44,32 +44,33 @@ type mpu struct {
 	orientation     spatialmath.Orientation
 	acceleration    r3.Vector
 	magnetometer    r3.Vector
-	i2c             board.I2C
+	mpuHandle, magHandle  board.I2CHandle
 	logger          golog.Logger
 	aScale, gScale      float64
 	gXCal, gYCal, gZCal float64
 	ahrs            ahrs.Madgwick
 
+	readMu          sync.RWMutex
 	mu              sync.Mutex
 	cancelFunc              func()
 	activeBackgroundWorkers sync.WaitGroup
 }
 
 func (i *mpu) ReadAngularVelocity(ctx context.Context) (spatialmath.AngularVelocity, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
+	i.readMu.RLock()
+	defer i.readMu.RUnlock()
 	return i.angularVelocity, nil
 }
 
 func (i *mpu) ReadOrientation(ctx context.Context) (spatialmath.Orientation, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
+	i.readMu.RLock()
+	defer i.readMu.RUnlock()
 	return i.orientation, nil
 }
 
 func (i *mpu) ReadAcceleration(ctx context.Context) (r3.Vector, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
+	i.readMu.RLock()
+	defer i.readMu.RUnlock()
 	return i.acceleration, nil
 }
 
@@ -97,18 +98,28 @@ func NewIMU(ctx context.Context, r robot.Robot, config config.Component, logger 
 		return nil, fmt.Errorf("can't find I2C bus: %s", config.Attributes["bus"].(string))
 	}
 
+	mpuHandle, errs := i2c.OpenHandle(MPU6050_ADDR)
+	if errs != nil {
+		return nil, errs
+	}
+
+	magHandle, errs := i2c.OpenHandle(AK8963_ADDR)
+	if errs != nil {
+		return nil, errs
+	}
+
 	// TODO Make these config variables
-	dev := &mpu{i2c: i2c, logger: logger,
+	dev := &mpu{mpuHandle: mpuHandle, magHandle: magHandle, logger: logger,
 		aScale: 2.0,
 		gScale: 250.0,
 		gXCal: -2.6,
 		gYCal: -1.6,
-		gZCal: 0,
+		gZCal: -0.3,
 	}
 
 	dev.ahrs = ahrs.NewMadgwick(0.1, 100) // 0.1 beta, 100hz update
 
-	errs := multierr.Combine(dev.startMPU(ctx), dev.startMag(ctx))
+	errs = multierr.Combine(dev.startMPU(ctx), dev.startMag(ctx))
 	if errs != nil {
 		return nil, errs
 	}
@@ -116,11 +127,12 @@ func NewIMU(ctx context.Context, r robot.Robot, config config.Component, logger 
 	var cancelCtx context.Context
 	cancelCtx, dev.cancelFunc = context.WithCancel(ctx)
 	waitCh := make(chan struct{})
-	s := 0.01 // 100hz
+	// startTime := time.Now()
+	// ticks := 0
 	dev.activeBackgroundWorkers.Add(1)
 	utils.PanicCapturingGo(func() {
 		defer dev.activeBackgroundWorkers.Done()
-		timer := time.NewTicker(time.Duration(s * float64(time.Second)))
+		timer := time.NewTicker(time.Duration(float64(time.Second)/100)) // 100hz
 		defer timer.Stop()
 		close(waitCh)
 		for {
@@ -133,9 +145,13 @@ func NewIMU(ctx context.Context, r robot.Robot, config config.Component, logger 
 			case <-cancelCtx.Done():
 				return
 			case <-timer.C:
+				// ticks++
+				// if ticks % 100 == 0 {
+				// 	logger.Debugf("MPU Time: %+v", time.Now().Sub(startTime) / time.Duration(ticks))
+				// }
 				err := dev.doRead(ctx)
 				if err != nil {
-					return
+					logger.Error(err)
 				}
 			}
 		}
@@ -147,24 +163,20 @@ func NewIMU(ctx context.Context, r robot.Robot, config config.Component, logger 
 
 
 func (i *mpu) startMPU(ctx context.Context) error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	h, errs := i.i2c.OpenHandle(MPU6050_ADDR)
-	if errs != nil {
-		return errs
-	}
-	defer h.Close()
+	// i.mu.Lock()
+	// defer i.mu.Unlock()
 
 	// Reset
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, PWR_MGMT_1, 0b10000000))
+	var errs error
+	errs = multierr.Combine(errs, i.mpuHandle.WriteByteData(ctx, PWR_MGMT_1, 0b10000000))
 	if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
 	// Set clocksource to optimal
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, PWR_MGMT_1, 0b00000001))
+	errs = multierr.Combine(errs, i.mpuHandle.WriteByteData(ctx, PWR_MGMT_1, 0b00000001))
 	if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
 	// Enable i2c passthrough for compass
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, INT_PIN_CFG, 0b00000010))
+	errs = multierr.Combine(errs, i.mpuHandle.WriteByteData(ctx, INT_PIN_CFG, 0b00000010))
 	if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
 
@@ -188,15 +200,11 @@ func (i *mpu) startMPU(ctx context.Context) error {
 }
 
 func (i *mpu) startMag(ctx context.Context) error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	h, errs := i.i2c.OpenHandle(AK8963_ADDR)
-	if errs != nil {
-		return errs
-	}
-	defer h.Close()
+	// i.mu.Lock()
+	// defer i.mu.Unlock()
 
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, AK8963_CNTL, 0))
+	var errs error
+	errs = multierr.Combine(errs, i.magHandle.WriteByteData(ctx, AK8963_CNTL, 0))
 	time.Sleep(100 * time.Millisecond)
 
 	res  := byte(0b0001)  // 0b0001 = 16-bit
@@ -204,36 +212,32 @@ func (i *mpu) startMag(ctx context.Context) error {
 
 	mode := (res <<4)+rate // bit conversion
 
-	errs = multierr.Combine(errs, h.WriteByteData(ctx, AK8963_CNTL, mode))
+	errs = multierr.Combine(errs, i.magHandle.WriteByteData(ctx, AK8963_CNTL, mode))
 	if !utils.SelectContextOrWait(ctx, 100 * time.Millisecond) { return errs }
 
 	return errs
 }
 
-
-
 func (i *mpu) Close() {
 	i.cancelFunc()
 	i.activeBackgroundWorkers.Wait()
+	i.mpuHandle.Close()
+	i.magHandle.Close()
 }
 
-
 func (i *mpu) doRead(ctx context.Context) error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	h, errs := i.i2c.OpenHandle(Address)
-	if errs != nil {
-		return errs
-	}
-	defer h.Close()
+	// i.mu.Lock()
+	// defer i.mu.Unlock()
 
+	var errs error
 	x, err := i.readRawBits(ctx, ACCEL_XOUT_H)
 	errs = multierr.Combine(errs, err)
 	y, err := i.readRawBits(ctx, ACCEL_YOUT_H)
 	errs = multierr.Combine(errs, err)
 	z, err := i.readRawBits(ctx, ACCEL_ZOUT_H)
 	errs = multierr.Combine(errs, err)
-	i.acceleration = r3.Vector{X: i.scaleAcceleration(x), Y: i.scaleAcceleration(y), Z: i.scaleAcceleration(z)}
+	acceleration := r3.Vector{X: i.scaleAcceleration(x), Y: i.scaleAcceleration(y), Z: i.scaleAcceleration(z)}
+
 
 
 	x, err = i.readRawBits(ctx, GYRO_XOUT_H)
@@ -242,14 +246,13 @@ func (i *mpu) doRead(ctx context.Context) error {
 	errs = multierr.Combine(errs, err)
 	z, err = i.readRawBits(ctx, GYRO_ZOUT_H)
 	errs = multierr.Combine(errs, err)
-	i.angularVelocity = spatialmath.AngularVelocity{X: i.scaleGyro(x) +  i.gXCal, Y: i.scaleGyro(y) + i.gYCal, Z: i.scaleGyro(z) + i.gZCal}
+	angularVelocity := spatialmath.AngularVelocity{X: i.scaleGyro(x) +  i.gXCal, Y: i.scaleGyro(y) + i.gYCal, Z: i.scaleGyro(z) + i.gZCal}
 
 	if errs != nil {
 		return errs
 	}
 
-
-	for loop := 0; loop < 100; loop++  {
+	for loop := 0; loop < 15; loop++  {
 		var errs error
 		x, err := i.readRawBitsMag(ctx, HXH)
 		errs = multierr.Combine(errs, err)
@@ -258,6 +261,15 @@ func (i *mpu) doRead(ctx context.Context) error {
 		z, err := i.readRawBitsMag(ctx, HZH)
 		errs = multierr.Combine(errs, err)
 
+		status, err := i.magHandle.ReadByteData(ctx, AK8963_ST2)
+		errs = multierr.Combine(errs, err)
+		if status != 0b10000 {
+			if loop > 10 {
+				return multierr.Combine(errs, fmt.Errorf("imu magnetometer overflow: %x", status))
+			}
+			continue
+		}
+
 		if errs == nil {
 			i.magnetometer = r3.Vector{X: i.scaleMag(x), Y: i.scaleMag(y), Z: i.scaleMag(z)}
 			break
@@ -265,12 +277,12 @@ func (i *mpu) doRead(ctx context.Context) error {
 	}
 
 	q := i.ahrs.Update9D(
-		i.angularVelocity.X * (math.Pi/180), // rad/s to deg/s
-		i.angularVelocity.Y * (math.Pi/180),
-		i.angularVelocity.Z * (math.Pi/180),
-		i.acceleration.X / 1000, // mm/s^2 to m/s^2
-		i.acceleration.Y / 1000,
-		i.acceleration.Z / 1000,
+		angularVelocity.X * (math.Pi/180), // rad/s to deg/s
+		angularVelocity.Y * (math.Pi/180),
+		angularVelocity.Z * (math.Pi/180),
+		acceleration.X / 1000, // mm/s^2 to m/s^2
+		acceleration.Y / 1000,
+		acceleration.Z / 1000,
 		i.magnetometer.X / 100,  // microteslas to gauss
 		i.magnetometer.Y / 100,
 		i.magnetometer.Z / 100,
@@ -278,7 +290,11 @@ func (i *mpu) doRead(ctx context.Context) error {
 
 	// i.logger.Debugf("SMURF %+v", q)
 
+	i.readMu.Lock()
 	i.orientation = spatialmath.NewOrientationFromQuat(quat.Number{q[0], q[1], q[2], q[3]})
+	i.acceleration = acceleration
+	i.angularVelocity = angularVelocity
+	i.readMu.Unlock()
 	return nil
 }
 
@@ -300,32 +316,25 @@ func (i *mpu) scaleMag(raw int16) float64 {
 }
 
 func (i *mpu) readRawBits(ctx context.Context, register uint8) (int16, error) {
-	h, errs := i.i2c.OpenHandle(MPU6050_ADDR)
-	if errs != nil {
-		return 0, errs
-	}
-	defer h.Close()
+	// xH, err1 := i.mpuHandle.ReadByteData(ctx, register)
+	// xL, err2 := i.mpuHandle.ReadByteData(ctx, register+1)
+	// return int16((uint16(xH)<<8)|uint16(xL)), multierr.Combine(err1, err2)
 
-	xH, err1 := h.ReadByteData(ctx, register)
-	xL, err2 := h.ReadByteData(ctx, register+1)
-
-	return int16((uint16(xH)<<8)|uint16(xL)), multierr.Combine(err1, err2)
+	x, err := i.mpuHandle.ReadWordData(ctx, register)
+	return int16(swapbytes16(x)), err
 }
 
 func (i *mpu) readRawBitsMag(ctx context.Context, register uint8) (int16, error) {
-	h, errs := i.i2c.OpenHandle(AK8963_ADDR)
-	if errs != nil {
-		return 0, errs
-	}
-	defer h.Close()
+	// xH, err1 := i.magHandle.ReadByteData(ctx, register)
+	// xL, err2 := i.magHandle.ReadByteData(ctx, register-1)
 
-	xH, err1 := h.ReadByteData(ctx, register)
-	xL, err2 := h.ReadByteData(ctx, register-1)
+	// return int16((uint16(xH)<<8)|uint16(xL)), multierr.Combine(err1, err2, err2)
 
-	status, err3 := h.ReadByteData(ctx, AK8963_ST2)
-	if status != 0b10000 {
-		return 0, fmt.Errorf("imu magnetometer overflow: %x", status)
-	}
+	x, err := i.mpuHandle.ReadWordData(ctx, register-1)
+	return int16(x), err
+}
 
-	return int16((uint16(xH)<<8)|uint16(xL)), multierr.Combine(err1, err2, err3)
+
+func swapbytes16(d uint16) uint16 {
+	return (d << 8) | (d >> 8)
 }
