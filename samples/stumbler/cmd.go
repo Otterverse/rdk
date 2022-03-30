@@ -13,6 +13,7 @@ import (
 	"go.viam.com/rdk/action"
 	"go.viam.com/rdk/config"
 	"go.viam.com/rdk/component/imu"
+	"go.viam.com/rdk/component/input"
 	"go.viam.com/rdk/component/motor"
 
 	"go.viam.com/rdk/robot"
@@ -35,6 +36,10 @@ var balancingMu sync.Mutex
 
 
 var bP, bI, bD, sP, sI, sD, awG float64
+
+var inputLeft, inputRight float64
+var lastLeft, lastRight time.Time
+var muLeft, muRight sync.Mutex
 
 func main() {
 	logger := golog.NewDevelopmentLogger("stumbler")
@@ -79,6 +84,43 @@ func mainWithArgs(ctx context.Context, args []string, logger golog.Logger) (err 
 	}
 	defer myRobot.Close(ctx)
 
+	g, err := input.FromRobot(myRobot, "Gamepad")
+	if err != nil {
+		return
+	}
+
+	ctrlFunc := func(ctx context.Context, event input.Event) {
+		if event.Event != input.PositionChangeAbs {
+				return
+		}
+
+		switch event.Control {
+		case input.ButtonSelect:
+			toggleBalance(ctx, myRobot)
+		case input.AbsoluteY:
+			muLeft.Lock()
+			defer muLeft.Unlock()
+			if event.Time.After(lastLeft) {
+				inputLeft = event.Value * -1
+				lastLeft = event.Time
+			}
+		case input.AbsoluteRY:
+			muRight.Lock()
+			defer muRight.Unlock()
+			if event.Time.After(lastRight) {
+				inputRight = event.Value * -1
+				lastRight = event.Time
+			}
+		}
+	}
+
+	for _, control := range []input.Control{input.AbsoluteY, input.AbsoluteRY, input.ButtonSelect} {
+		err := g.RegisterControlCallback(ctx, control, []input.EventType{input.PositionChangeAbs, input.ButtonPress}, ctrlFunc)
+		if err != nil {
+				return err
+		}
+	}
+
 	action.RegisterAction("startBalance", startBalance)
 	action.RegisterAction("stopBalance", stopBalance)
 
@@ -95,6 +137,17 @@ func mainWithArgs(ctx context.Context, args []string, logger golog.Logger) (err 
 	//debugCancelFunc()
 	workers.Wait()
 	return err
+}
+
+func toggleBalance(ctx context.Context, r robot.Robot) {
+	balancingMu.Lock()
+	on := balancing
+	balancingMu.Unlock()
+	if on {
+		stopBalance(ctx, r)
+	} else {
+		startBalance(ctx, r)		
+	}
 }
 
 func startBalance(ctx context.Context, r robot.Robot) {
@@ -221,8 +274,10 @@ func balance(ctx context.Context, r robot.Robot) {
 			curSpeed := prevSpeed * 0.7 + ((lSpeed + rSpeed) / 2) * 0.3
 			prevSpeed = curSpeed
 
+			speedInput := (inputLeft + inputRight) / 2
+
 			speed.Update(pid.TrackingControllerInput{
-				ReferenceSignal:  0,
+				ReferenceSignal:  speedInput,
 				ActualSignal:     curSpeed,
 				SamplingInterval:  50 * time.Millisecond,
 			})
