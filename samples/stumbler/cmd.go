@@ -56,12 +56,12 @@ func mainWithArgs(ctx context.Context, args []string, logger golog.Logger) (err 
 
 
 	flag.Float64Var(&bP, "bP", 0.1, "Balance kP")
-	flag.Float64Var(&bI, "bI", 0, "Balance kI")
+	flag.Float64Var(&bI, "bI", 1.0, "Balance kI")
 	flag.Float64Var(&bD, "bD", 0.05, "Balance kD")
 
-	flag.Float64Var(&sP, "sP", 4.0, "Speed kP")
-	flag.Float64Var(&sI, "sI", 8.0, "Speed kI")
-	flag.Float64Var(&sD, "sD", 6.0, "Speed kD")
+	flag.Float64Var(&sP, "sP", 5.0, "Speed kP")
+	flag.Float64Var(&sI, "sI", 1.0, "Speed kI")
+	flag.Float64Var(&sD, "sD", 0.2, "Speed kD")
 
 	flag.Float64Var(&awG, "awG", 0, "Antiwindup Gain")
 
@@ -90,10 +90,6 @@ func mainWithArgs(ctx context.Context, args []string, logger golog.Logger) (err 
 	}
 
 	ctrlFunc := func(ctx context.Context, event input.Event) {
-		if event.Event != input.PositionChangeAbs {
-				return
-		}
-
 		switch event.Control {
 		case input.ButtonSelect:
 			toggleBalance(ctx, myRobot)
@@ -146,7 +142,7 @@ func toggleBalance(ctx context.Context, r robot.Robot) {
 	if on {
 		stopBalance(ctx, r)
 	} else {
-		startBalance(ctx, r)		
+		startBalance(ctx, r)
 	}
 }
 
@@ -154,6 +150,7 @@ func startBalance(ctx context.Context, r robot.Robot) {
 	balancingMu.Lock()
 	defer balancingMu.Unlock()
 	if balancing { return }
+
 	var cancelCtx context.Context
 	cancelCtx, cancelFunc = context.WithCancel(ctx)
 	workers.Add(1)
@@ -231,8 +228,8 @@ func balance(ctx context.Context, r robot.Robot) {
 	var tick uint
 	prevLPos, _ := motorL.GetPosition(ctx)
 	prevRPos, _ := motorR.GetPosition(ctx)
-	var prevSpeed float64
-	startTime := time.Now()
+	var prevSpeed, prevSpeedInput float64
+	// startTime := time.Now()
 	for {
 		tick++
 		select {
@@ -246,15 +243,16 @@ func balance(ctx context.Context, r robot.Robot) {
 		case <-timer.C:
 		}
 
-		if tick % 100 == 0 {
-			r.Logger().Debug("AvgTime: ", time.Now().Sub(startTime) / time.Duration(tick) )
-		}
+		// if tick % 100 == 0 {
+		// 	r.Logger().Debug("AvgTime: ", time.Now().Sub(startTime) / time.Duration(tick) )
+		// }
 
 
 		orientation, _ := i.ReadOrientation(ctx)
 		o := orientation.EulerAngles()
+		pitch := (o.Pitch * 180/math.Pi) - 3.2
 
-		if math.Abs(o.Pitch * 180/math.Pi) > 30 || math.Abs(balance.State.UnsaturatedControlSignal) > 1.1 {
+		if math.Abs(pitch) > 20 || math.Abs(balance.State.UnsaturatedControlSignal) > 1.1 {
 			balancing = false
 			return
 		}
@@ -269,33 +267,36 @@ func balance(ctx context.Context, r robot.Robot) {
 			rSpeed := (newRPos - prevRPos) / 0.05
 
 			prevLPos, prevRPos = newLPos, newRPos
+			revPerSecLimit := 1.0
 
 			// Filter the speed over time a tad more
 			curSpeed := prevSpeed * 0.7 + ((lSpeed + rSpeed) / 2) * 0.3
 			prevSpeed = curSpeed
 
-			speedInput := (inputLeft + inputRight) / 2
+			// Same with input
+			speedInput := prevSpeedInput * 0.7 + ((inputLeft + inputRight) / 2 * revPerSecLimit) * 0.3
+			prevSpeedInput = speedInput
 
 			speed.Update(pid.TrackingControllerInput{
 				ReferenceSignal:  speedInput,
 				ActualSignal:     curSpeed,
 				SamplingInterval:  50 * time.Millisecond,
 			})
-			r.Logger().Debugf("SPID: %+v", speed.State)
-			r.Logger().Debugf("Out: %.2f, Speed: %.2f, Pitch: %.2f",speed.State.ControlSignal, curSpeed, o.Pitch * 180/math.Pi)
+			// r.Logger().Debugf("SPID: %+v", speed.State)
+			r.Logger().Debugf("Angle: %.2f/%.2f, Speed: %.3f/%.3f, PWM: %.3f", speed.State.ControlSignal, pitch, speedInput, curSpeed, balance.State.ControlSignal)
 		}
 
 
 		balance.Update(pid.TrackingControllerInput{
 			ReferenceSignal:  speed.State.ControlSignal,
-			ActualSignal:     o.Pitch * 180/math.Pi,
+			ActualSignal:     pitch,
 			SamplingInterval: 10 * time.Millisecond,
 		})
 
-		//r.Logger().Debugf("Bal: %+v", balance.State)
+		avgInput := (inputLeft + inputRight) / 2
 
-		motorL.SetPower(ctx, (balance.State.ControlSignal) * -1)
-		motorR.SetPower(ctx, (balance.State.ControlSignal) * -1)
+		motorL.SetPower(ctx, balance.State.ControlSignal * -1 + (inputLeft - avgInput) * 0.2)
+		motorR.SetPower(ctx, balance.State.ControlSignal * -1 + (inputRight - avgInput) * 0.2)
 
 	}
 }
