@@ -324,7 +324,6 @@ func (rc *RobotClient) connect(ctx context.Context) error {
 		if err = os.Chdir(filepath.Dir(rc.address)); err != nil {
 			return err
 		}
-		rc.dialOptions = append(rc.dialOptions, rpc.WithInsecure)
 		// TODO Add blocking dial option here, otherwise return to cwd happens before true connection
 		conn, err = grpc.Dial(ctx, filepath.Base(rc.address), rc.logger, rc.dialOptions...)
 		err = multierr.Combine(err, os.Chdir(cwd))
