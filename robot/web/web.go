@@ -29,6 +29,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/cors"
 	"go.opencensus.io/trace"
+	"go.uber.org/multierr"
 	pb "go.viam.com/api/robot/v1"
 	"go.viam.com/utils"
 	"go.viam.com/utils/jwks"
@@ -361,7 +362,19 @@ func (svc *webService) StartModule(ctx context.Context) error {
 			addr = addr[2:]
 		}
 		svc.modAddr = addr
-		lis, err = net.Listen("unix", addr)
+
+		// MacOS has a maximum socket path length of 104 characters (and Linux has 108.)
+		// This causes a problem as MacOS's default temp directory is already ~50 characters long (whereas linux is just "/tmp").
+		// We work around this by doing a chdir before creating the socket, so it only needs the final path component.
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		if err = os.Chdir(filepath.Dir(addr)); err != nil {
+			return err
+		}
+		lis, err = net.Listen("unix", filepath.Base(addr))
+		err = multierr.Combine(err, os.Chdir(cwd))
 		if err != nil {
 			return errors.WithMessage(err, "failed to listen")
 		}
@@ -395,7 +408,7 @@ func (svc *webService) StartModule(ctx context.Context) error {
 	svc.activeBackgroundWorkers.Add(1)
 	utils.PanicCapturingGo(func() {
 		defer svc.activeBackgroundWorkers.Done()
-		svc.logger.Debugw("module server listening", "socket path", lis.Addr())
+		svc.logger.Debugw("module server listening", "socket path", svc.addr)
 		defer utils.UncheckedErrorFunc(func() error { return os.RemoveAll(filepath.Dir(addr)) })
 		if err := svc.modServer.Serve(lis); err != nil {
 			svc.logger.Errorw("failed to serve module service", "error", err)

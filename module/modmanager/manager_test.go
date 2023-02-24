@@ -3,6 +3,7 @@ package modmanager
 import (
 	"context"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/edaniels/golog"
@@ -18,7 +19,7 @@ import (
 	"go.viam.com/rdk/utils"
 )
 
-func TestModManagerFunctions(t *testing.T) {
+func TestModManagerFunctionsWithReallyLongTestName(t *testing.T) {
 	ctx := context.Background()
 	logger := golog.NewTestLogger(t)
 	modExe := utils.ResolveFile("examples/customresources/demos/simplemodule/run.sh")
@@ -45,8 +46,7 @@ func TestModManagerFunctions(t *testing.T) {
 		return logger
 	}
 
-	parentAddr := t.TempDir()
-	parentAddr += "/parent.sock"
+	parentAddr := filepath.Join(t.TempDir(), "parent.sock")
 
 	myRobot.ModuleAddressFunc = func() (string, error) {
 		return parentAddr, nil

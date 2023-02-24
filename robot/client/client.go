@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -309,9 +311,32 @@ func (rc *RobotClient) connect(ctx context.Context) error {
 			return err
 		}
 	}
-	conn, err := grpc.Dial(ctx, rc.address, rc.logger, rc.dialOptions...)
-	if err != nil {
-		return err
+
+	var conn rpc.ClientConn
+	if strings.HasPrefix(rc.address, "unix:") {
+		// MacOS/Linux have maximum socket path lengths of 104/108, so long absolute paths can cause failures.
+		// MacOS's default temp directory is already ~50 characters long.
+		// We work around this by doing a chdir before connecting the socket, so it only needs the final path component.
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		if err = os.Chdir(filepath.Dir(rc.address)); err != nil {
+			return err
+		}
+		rc.dialOptions = append(rc.dialOptions, rpc.WithInsecure)
+		// TODO Add blocking dial option here, otherwise return to cwd happens before true connection
+		conn, err = grpc.Dial(ctx, filepath.Base(rc.address), rc.logger, rc.dialOptions...)
+		err = multierr.Combine(err, os.Chdir(cwd))
+		if err != nil {
+			return err
+		}
+	} else {
+		var err error
+		conn, err = grpc.Dial(ctx, rc.address, rc.logger, rc.dialOptions...)
+		if err != nil {
+			return err
+		}
 	}
 
 	rc.mu.Lock()

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -151,8 +152,18 @@ func (m *Module) Start(ctx context.Context) error {
 
 	var lis net.Listener
 	if err := MakeSelfOwnedFilesFunc(func() error {
-		var err error
-		lis, err = net.Listen("unix", m.addr)
+		// MacOS has a maximum socket path length of 104 characters (and Linux has 108.)
+		// This causes a problem as MacOS's default temp directory is already ~50 characters long (whereas linux is just "/tmp").
+		// We work around this by doing a chdir before creating the socket, so it only needs the final path component.
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		if err = os.Chdir(filepath.Dir(m.addr)); err != nil {
+			return err
+		}
+		lis, err = net.Listen("unix", filepath.Base(m.addr))
+		err = multierr.Combine(err, os.Chdir(cwd))
 		if err != nil {
 			return errors.WithMessage(err, "failed to listen")
 		}
@@ -165,7 +176,7 @@ func (m *Module) Start(ctx context.Context) error {
 	utils.PanicCapturingGo(func() {
 		defer m.activeBackgroundWorkers.Done()
 		defer utils.UncheckedErrorFunc(func() error { return os.Remove(m.addr) })
-		m.logger.Infof("server listening at %v", lis.Addr())
+		m.logger.Infof("server listening at %v", m.addr)
 		if err := m.server.Serve(lis); err != nil {
 			m.logger.Errorf("failed to serve: %v", err)
 		}

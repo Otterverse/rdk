@@ -4,6 +4,7 @@ package modmanager
 import (
 	"context"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -219,11 +220,22 @@ func (mgr *Manager) getModule(cfg config.Component) (*module, bool) {
 }
 
 func (m *module) dial() error {
-	var err error
+	// MacOS/Linux have maximum socket path lengths of 104/108, so long absolute paths can cause failures.
+	// MacOS's default temp directory is already ~50 characters long.
+	// We work around this by doing a chdir before connecting the socket, so it only needs the final path component.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if err = os.Chdir(filepath.Dir(m.addr)); err != nil {
+		return err
+	}
+
 	// TODO(PRODUCT-343): session support probably means interceptors here
 	m.conn, err = grpc.Dial(
-		"unix://"+m.addr,
+		"unix://"+filepath.Base(m.addr),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
 		grpc.WithChainUnaryInterceptor(
 			grpc_retry.UnaryClientInterceptor(),
 			operation.UnaryClientInterceptor,
@@ -233,6 +245,7 @@ func (m *module) dial() error {
 			operation.StreamClientInterceptor,
 		),
 	)
+	err = multierr.Combine(err, os.Chdir(cwd))
 	if err != nil {
 		return errors.WithMessage(err, "module startup failed")
 	}
