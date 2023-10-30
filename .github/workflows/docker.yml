@@ -20,7 +20,7 @@ jobs:
       matrix:
         include:
         # rdk-devenv
-        - arch: ubuntu-latest
+        - arch: buildjet-2vcpu-ubuntu-2204
           tag: amd64
           platform: linux/amd64
           image: rdk-devenv
